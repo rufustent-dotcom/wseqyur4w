@@ -1,0 +1,6 @@
+{
+  "name": "OpenMontage — Agentic Video Production & Live Research Studio",
+  "description": "The interactive showcase, pipeline explorer, and Google Search-grounded research & script fact-checking studio for OpenMontage, the open-source agentic video production system.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

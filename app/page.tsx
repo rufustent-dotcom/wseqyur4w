@@ -18,6 +18,8 @@ import {
   LogIn,
   LogOut,
   Cloud,
+  Share2,
+  Link2,
 } from 'lucide-react';
 import {
   SHOWCASE_VIDEOS,
@@ -53,6 +55,11 @@ export default function OpenMontagePage() {
   const [showQuickstartModal, setShowQuickstartModal] = useState(false);
   const [heroMuted, setHeroMuted] = useState(true);
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const [activeShareFilmId, setActiveShareFilmId] = useState<string | null>(null);
+  const [copiedShareBadge, setCopiedShareBadge] = useState<{
+    filmId: string;
+    label: string;
+  } | null>(null);
 
   // Shared Studio & Provider Key State
   const [studioExternalPrompt, setStudioExternalPrompt] = useState('');
@@ -137,11 +144,100 @@ export default function OpenMontagePage() {
         setSelectedFilmModal(null);
         setShowQuickstartModal(false);
         setShowGroundingSettingsPopover(false);
+        setActiveShareFilmId(null);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  // Hydrate showcase film or pipeline configuration when visiting a shared deep link
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const sharedFilmId = params.get('film');
+      const sharedPrompt = params.get('prompt');
+      const sharedPipeline = params.get('pipeline');
+      const sharedRuntime = params.get('runtime');
+      const sharedKeys = params.get('keys');
+
+      if (sharedKeys !== null) {
+        const parsedKeys = sharedKeys
+          .split(',')
+          .map((k) => k.trim())
+          .filter(Boolean);
+        setAvailableKeys(parsedKeys);
+      }
+
+      if (sharedFilmId) {
+        const matchedFilm = SHOWCASE_VIDEOS.find((v) => v.id === sharedFilmId);
+        if (matchedFilm) {
+          setStudioExternalPrompt(sharedPrompt || matchedFilm.promptUsed);
+          setStudioExternalReference(
+            `Shared Pipeline Config: ${matchedFilm.titleEn} (${
+              sharedPipeline || matchedFilm.pipeline
+            } · ${sharedRuntime || matchedFilm.runtime} · Cost ${matchedFilm.cost})`
+          );
+          if (params.get('view') === 'sheet') {
+            setSelectedFilmModal(matchedFilm);
+          }
+          return;
+        }
+      }
+
+      if (sharedPrompt) {
+        setStudioExternalPrompt(sharedPrompt);
+        if (sharedPipeline || sharedRuntime) {
+          setStudioExternalReference(
+            `Shared Pipeline Config: ${sharedPipeline || 'Animated Explainer'} (${
+              sharedRuntime || 'Remotion'
+            })`
+          );
+        }
+      }
+    } catch {
+      // Ignore URL parsing errors
+    }
+  }, []);
+
+  const buildPipelineDeepLink = useCallback(
+    (film: ShowcaseVideo) => {
+      const baseUrl =
+        typeof window !== 'undefined'
+          ? `${window.location.origin}${window.location.pathname}`
+          : 'https://openmontage.dev/';
+      const params = new URLSearchParams();
+      params.set('film', film.id);
+      params.set('pipeline', film.pipeline);
+      params.set('runtime', film.runtime);
+      params.set('cost', film.cost);
+      if (availableKeys.length > 0) {
+        params.set('keys', availableKeys.join(','));
+      }
+      params.set('prompt', film.promptUsed);
+      return `${baseUrl}?${params.toString()}#research-studio`;
+    },
+    [availableKeys]
+  );
+
+  const handleCopyShareItem = useCallback(
+    (film: ShowcaseVideo, mode: 'deep-link' | 'video-url') => {
+      const targetText =
+        mode === 'video-url' ? film.videoUrl : buildPipelineDeepLink(film);
+      navigator.clipboard.writeText(targetText);
+      setCopiedShareBadge({
+        filmId: film.id,
+        label: mode === 'video-url' ? 'Video URL Copied' : 'Pipeline Link Copied',
+      });
+      setActiveShareFilmId(null);
+      setTimeout(() => {
+        setCopiedShareBadge((prev) =>
+          prev?.filmId === film.id ? null : prev
+        );
+      }, 2200);
+    },
+    [buildPipelineDeepLink]
+  );
 
   const handleLoadIntoStudio = useCallback((prompt: string, referenceNote?: string) => {
     setStudioExternalPrompt(prompt);
@@ -751,15 +847,102 @@ export default function OpenMontagePage() {
                   </div>
 
                   {/* Card Footer Actions */}
-                  <div className="px-6 py-3.5 bg-[#F3EFE6]/60 border-t border-[#E5E0D5] flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedFilmModal(film)}
-                      className="text-xs font-medium text-[#1C1917] hover:text-[#9A3412] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
-                    >
-                      <BookOpen className="w-3.5 h-3.5 text-[#9A3412]" />
-                      {lang === 'zh' ? '查看分项成本与工程单' : 'Inspect Production Sheet'}
-                    </button>
+                  <div className="px-6 py-3.5 bg-[#F3EFE6]/60 border-t border-[#E5E0D5] flex items-center justify-between gap-2 relative">
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFilmModal(film)}
+                        className="text-xs font-medium text-[#1C1917] hover:text-[#9A3412] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                      >
+                        <BookOpen className="w-3.5 h-3.5 text-[#9A3412]" />
+                        {lang === 'zh' ? '查看分项成本与工程单' : 'Production Sheet'}
+                      </button>
+
+                      {/* Share Dropdown Trigger (Copies Pipeline Deep Link or Direct Video URL) */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setActiveShareFilmId((prev) =>
+                              prev === film.id ? null : film.id
+                            )
+                          }
+                          title="Share video URL or copy deep link to pipeline configuration"
+                          className="px-2 py-1 rounded-md border border-[#D6CEBE] bg-[#FBF9F5] hover:bg-[#E5E0D5]/70 text-xs font-mono text-[#1C1917] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+                        >
+                          {copiedShareBadge?.filmId === film.id ? (
+                            <>
+                              <Check className="w-3 h-3 text-[#15803D]" />
+                              <span className="text-[#15803D] font-semibold">
+                                {copiedShareBadge.label}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <Share2 className="w-3 h-3 text-[#9A3412]" />
+                              <span>Share</span>
+                            </>
+                          )}
+                        </button>
+
+                        {activeShareFilmId === film.id && (
+                          <div
+                            className="absolute left-0 bottom-full mb-2 w-64 rounded-xl border border-[#D6CEBE] bg-[#FBF9F5] shadow-xl p-2 z-30 text-xs"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="px-2.5 py-1.5 border-b border-[#E5E0D5] flex items-center justify-between">
+                              <span className="font-mono text-[10px] uppercase tracking-wider text-[#78716C] font-semibold">
+                                SHARE · {film.catalogId}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setActiveShareFilmId(null)}
+                                className="text-[#78716C] hover:text-[#1C1917] cursor-pointer"
+                                aria-label="Close share menu"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                            <div className="mt-1 space-y-1">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleCopyShareItem(film, 'deep-link')
+                                }
+                                className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-[#F3EFE6] transition-colors flex items-start gap-2 cursor-pointer"
+                              >
+                                <Link2 className="w-3.5 h-3.5 text-[#9A3412] shrink-0 mt-0.5" />
+                                <div>
+                                  <div className="font-medium text-[#1C1917]">
+                                    Copy Pipeline Config Link
+                                  </div>
+                                  <div className="text-[11px] font-mono text-[#78716C]">
+                                    Deep link with {film.pipeline} &amp; {film.runtime}
+                                  </div>
+                                </div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleCopyShareItem(film, 'video-url')
+                                }
+                                className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-[#F3EFE6] transition-colors flex items-start gap-2 cursor-pointer"
+                              >
+                                <Film className="w-3.5 h-3.5 text-[#1E3A8A] shrink-0 mt-0.5" />
+                                <div>
+                                  <div className="font-medium text-[#1C1917]">
+                                    Copy Direct Video URL
+                                  </div>
+                                  <div className="text-[11px] font-mono text-[#78716C]">
+                                    Direct MP4 stream link
+                                  </div>
+                                </div>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
 
                     <button
                       type="button"
@@ -967,25 +1150,74 @@ export default function OpenMontagePage() {
                   </dl>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    const film = selectedFilmModal;
-                    setSelectedFilmModal(null);
-                    handleLoadIntoStudio(
-                      film.promptUsed,
-                      `Reference Film: ${film.titleEn} (${film.pipeline}, ${film.runtime})`
-                    );
-                    const el = document.getElementById('research-studio');
-                    if (el) el.scrollIntoView({ behavior: 'smooth' });
-                  }}
-                  className="mt-4 w-full py-2 px-3 rounded-lg bg-[#9A3412] hover:bg-[#7C2D12] text-white text-xs font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  {lang === 'zh'
-                    ? '载入实时网络研究台复现此工作流'
-                    : 'Reproduce Workflow in Live Studio'}
-                </button>
+                <div className="mt-4 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleCopyShareItem(selectedFilmModal, 'deep-link')
+                      }
+                      className="py-2 px-2.5 rounded-lg border border-[#D6CEBE] bg-[#FBF9F5] hover:bg-[#E5E0D5] text-[#1C1917] text-xs font-mono transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      {copiedShareBadge?.filmId === selectedFilmModal.id &&
+                      copiedShareBadge.label === 'Pipeline Link Copied' ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-[#15803D]" />
+                          <span className="text-[#15803D] font-semibold">
+                            Link Copied
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <Link2 className="w-3.5 h-3.5 text-[#9A3412]" />
+                          <span>Copy Config Link</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleCopyShareItem(selectedFilmModal, 'video-url')
+                      }
+                      className="py-2 px-2.5 rounded-lg border border-[#D6CEBE] bg-[#FBF9F5] hover:bg-[#E5E0D5] text-[#1C1917] text-xs font-mono transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      {copiedShareBadge?.filmId === selectedFilmModal.id &&
+                      copiedShareBadge.label === 'Video URL Copied' ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-[#15803D]" />
+                          <span className="text-[#15803D] font-semibold">
+                            URL Copied
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <Share2 className="w-3.5 h-3.5 text-[#1E3A8A]" />
+                          <span>Copy Video URL</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const film = selectedFilmModal;
+                      setSelectedFilmModal(null);
+                      handleLoadIntoStudio(
+                        film.promptUsed,
+                        `Reference Film: ${film.titleEn} (${film.pipeline}, ${film.runtime})`
+                      );
+                      const el = document.getElementById('research-studio');
+                      if (el) el.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                    className="w-full py-2 px-3 rounded-lg bg-[#9A3412] hover:bg-[#7C2D12] text-white text-xs font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    {lang === 'zh'
+                      ? '载入实时网络研究台复现此工作流'
+                      : 'Reproduce Workflow in Live Studio'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

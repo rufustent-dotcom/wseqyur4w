@@ -45,7 +45,7 @@ export default function RootLayout({
 }) {
   return (
     <html
-      lang="zh-CN"
+      lang="en"
       className={`${fraunces.variable} ${jakarta.variable} ${jetbrains.variable} scroll-smooth`}
     >
       <body

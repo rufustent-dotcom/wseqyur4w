@@ -1,0 +1,268 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // 3. Entity Validation Blueprints (Synchronized with firebase-blueprint.json)
+    function isValidResearchBrief(data) {
+      return data.keys().hasAll([
+          'userId',
+          'mode',
+          'query',
+          'referenceVideo',
+          'markdown',
+          'citationsCount',
+          'pinned',
+          'groundingMode',
+          'createdAtLabel',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId',
+          'mode',
+          'query',
+          'referenceVideo',
+          'markdown',
+          'citationsCount',
+          'pinned',
+          'groundingMode',
+          'createdAtLabel',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.userId is string &&
+        data.userId.size() >= 1 &&
+        data.userId.size() <= 128 &&
+        data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.userId == request.auth.uid &&
+        data.mode is string &&
+        data.mode.size() <= 32 &&
+        (data.mode == 'proposal' || data.mode == 'fact-check' || data.mode == 'news-agent') &&
+        data.query is string &&
+        data.query.size() >= 1 &&
+        data.query.size() <= 2000 &&
+        data.referenceVideo is string &&
+        data.referenceVideo.size() <= 1000 &&
+        data.markdown is string &&
+        data.markdown.size() >= 1 &&
+        data.markdown.size() <= 30000 &&
+        data.citationsCount is int &&
+        data.citationsCount >= 0 &&
+        data.citationsCount <= 100 &&
+        data.pinned is bool &&
+        data.groundingMode is string &&
+        data.groundingMode.size() <= 32 &&
+        (data.groundingMode == 'live-web' || data.groundingMode == 'static-training') &&
+        data.createdAtLabel is string &&
+        data.createdAtLabel.size() >= 1 &&
+        data.createdAtLabel.size() <= 64 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPipelineAttempt(data) {
+      return data.keys().hasAll([
+          'userId',
+          'runCode',
+          'pipelineId',
+          'pipelineNameZh',
+          'pipelineNameEn',
+          'prompt',
+          'runtime',
+          'status',
+          'statusLabelZh',
+          'statusLabelEn',
+          'durationSec',
+          'estimatedCost',
+          'settledCost',
+          'groundedSummary',
+          'startedAtLabel',
+          'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId',
+          'runCode',
+          'pipelineId',
+          'pipelineNameZh',
+          'pipelineNameEn',
+          'prompt',
+          'runtime',
+          'status',
+          'statusLabelZh',
+          'statusLabelEn',
+          'durationSec',
+          'estimatedCost',
+          'settledCost',
+          'groundedSummary',
+          'startedAtLabel',
+          'createdAt'
+        ]) &&
+        data.userId is string &&
+        data.userId.size() >= 1 &&
+        data.userId.size() <= 128 &&
+        data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.userId == request.auth.uid &&
+        data.runCode is string &&
+        data.runCode.size() >= 1 &&
+        data.runCode.size() <= 64 &&
+        data.runCode.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.pipelineId is string &&
+        data.pipelineId.size() >= 1 &&
+        data.pipelineId.size() <= 64 &&
+        data.pipelineId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.pipelineNameZh is string &&
+        data.pipelineNameZh.size() >= 1 &&
+        data.pipelineNameZh.size() <= 128 &&
+        data.pipelineNameEn is string &&
+        data.pipelineNameEn.size() >= 1 &&
+        data.pipelineNameEn.size() <= 128 &&
+        data.prompt is string &&
+        data.prompt.size() >= 1 &&
+        data.prompt.size() <= 2000 &&
+        data.runtime is string &&
+        data.runtime.size() <= 32 &&
+        (data.runtime == 'Remotion' || data.runtime == 'HyperFrames' || data.runtime == 'FFmpeg') &&
+        data.status is string &&
+        data.status.size() <= 32 &&
+        (data.status == 'completed' || data.status == 'fallback' || data.status == 'failed') &&
+        data.statusLabelZh is string &&
+        data.statusLabelZh.size() >= 1 &&
+        data.statusLabelZh.size() <= 128 &&
+        data.statusLabelEn is string &&
+        data.statusLabelEn.size() >= 1 &&
+        data.statusLabelEn.size() <= 128 &&
+        data.durationSec is int &&
+        data.durationSec >= 1 &&
+        data.durationSec <= 7200 &&
+        data.estimatedCost is string &&
+        data.estimatedCost.size() >= 1 &&
+        data.estimatedCost.size() <= 32 &&
+        data.settledCost is string &&
+        data.settledCost.size() >= 1 &&
+        data.settledCost.size() <= 32 &&
+        data.groundedSummary is string &&
+        data.groundedSummary.size() >= 1 &&
+        data.groundedSummary.size() <= 5000 &&
+        data.startedAtLabel is string &&
+        data.startedAtLabel.size() >= 1 &&
+        data.startedAtLabel.size() <= 64 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidUserPreferences(data) {
+      return data.keys().hasAll([
+          'userId',
+          'useGoogleSearch',
+          'lang',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId',
+          'useGoogleSearch',
+          'lang',
+          'updatedAt'
+        ]) &&
+        data.userId is string &&
+        data.userId.size() >= 1 &&
+        data.userId.size() <= 128 &&
+        data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.userId == request.auth.uid &&
+        data.useGoogleSearch is bool &&
+        data.lang is string &&
+        data.lang.size() <= 8 &&
+        (data.lang == 'zh' || data.lang == 'en') &&
+        data.updatedAt is timestamp;
+    }
+
+    // 4. User-Scoped Collections
+    match /users/{userId}/researchBriefs/{briefId} {
+      allow get: if isOwner(userId) && isValidId(userId) && isValidId(briefId) && existing().userId == request.auth.uid;
+      allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+      allow create: if isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(briefId) &&
+        isValidResearchBrief(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if (
+        isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(briefId) &&
+        isValidResearchBrief(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          // Action 1: Toggle Pin status
+          incoming().diff(existing()).affectedKeys().hasOnly(['pinned', 'updatedAt']) ||
+          // Action 2: Refresh / Re-invoke Brief content and grounding mode
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'markdown',
+            'citationsCount',
+            'groundingMode',
+            'createdAtLabel',
+            'updatedAt'
+          ])
+        )
+      );
+      allow delete: if isOwner(userId) && isValidId(userId) && isValidId(briefId) && existing().userId == request.auth.uid;
+    }
+
+    match /users/{userId}/pipelineAttempts/{attemptId} {
+      allow get: if isOwner(userId) && isValidId(userId) && isValidId(attemptId) && existing().userId == request.auth.uid;
+      allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+      allow create: if isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(attemptId) &&
+        isValidPipelineAttempt(incoming()) &&
+        incoming().createdAt == request.time;
+      // Terminal State Lock: Recorded pipeline attempts are immutable audit logs
+      allow update: if false;
+      allow delete: if isOwner(userId) && isValidId(userId) && isValidId(attemptId) && existing().userId == request.auth.uid;
+    }
+
+    match /users/{userId}/settings/{settingId} {
+      allow get: if isOwner(userId) && isValidId(userId) && isValidId(settingId) && existing().userId == request.auth.uid;
+      allow list: if false;
+      allow create: if isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(settingId) &&
+        isValidUserPreferences(incoming()) &&
+        incoming().updatedAt == request.time;
+      allow update: if (
+        isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(settingId) &&
+        isValidUserPreferences(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['useGoogleSearch', 'lang', 'updatedAt'])
+      );
+      allow delete: if false;
+    }
+  }
+}

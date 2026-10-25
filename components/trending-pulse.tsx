@@ -17,10 +17,15 @@ import {
 
 interface TrendingPulseProps {
   lang: 'zh' | 'en';
+  useGoogleSearch: boolean;
   onLoadTopicIntoStudio: (prompt: string, note?: string) => void;
 }
 
-export function TrendingPulse({ lang, onLoadTopicIntoStudio }: TrendingPulseProps) {
+export function TrendingPulse({
+  lang,
+  useGoogleSearch,
+  onLoadTopicIntoStudio,
+}: TrendingPulseProps) {
   const [selectedBeat, setSelectedBeat] = useState<
     'all' | 'explainer' | 'documentary' | 'cinematic' | 'product'
   >('all');
@@ -56,6 +61,7 @@ export function TrendingPulse({ lang, onLoadTopicIntoStudio }: TrendingPulseProp
           mode: 'trends',
           beat: targetBeat,
           language: lang,
+          useGoogleSearch,
         }),
       });
       const data = await res.json();
@@ -71,8 +77,8 @@ export function TrendingPulse({ lang, onLoadTopicIntoStudio }: TrendingPulseProp
       setErrorMsg(
         err?.message ||
           (lang === 'zh'
-            ? '实时趋势检索失败，请稍后重试。'
-            : 'Failed to fetch live trends from Google Search.')
+            ? '选题检索失败，请稍后重试。'
+            : 'Failed to fetch trends.')
       );
     } finally {
       setIsRefreshing(false);
@@ -111,12 +117,20 @@ export function TrendingPulse({ lang, onLoadTopicIntoStudio }: TrendingPulseProp
                 className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`}
               />
               {isRefreshing
+                ? useGoogleSearch
+                  ? lang === 'zh'
+                    ? '正在从 Google Search 拉取实时选题...'
+                    : 'Searching Live Web Trends...'
+                  : lang === 'zh'
+                  ? '正在从静态训练数据生成选题...'
+                  : 'Generating Topics (Static Data)...'
+                : useGoogleSearch
                 ? lang === 'zh'
-                  ? '正在从 Google Search 拉取实时选题...'
-                  : 'Searching Live Web Trends...'
+                  ? '刷新实时全网选题 (Google Search)'
+                  : 'Refresh Live Web Pulse (Google Search)'
                 : lang === 'zh'
-                ? '刷新实时全网选题 (Google Search)'
-                : 'Refresh Live Web Pulse (Google Search)'}
+                ? '生成常青选题建议 (静态训练数据)'
+                : 'Generate Topics (Static Training Data)'}
             </button>
           </div>
         </div>
@@ -141,7 +155,17 @@ export function TrendingPulse({ lang, onLoadTopicIntoStudio }: TrendingPulseProp
           </div>
 
           <div className="text-xs font-mono text-[#78716C]">
-            <span>SOURCE: Google Search Grounding</span>
+            <span
+              className={
+                useGoogleSearch
+                  ? 'text-[#15803D] font-semibold'
+                  : 'text-[#B45309] font-semibold'
+              }
+            >
+              {useGoogleSearch
+                ? 'SOURCE: Live Google Search Grounding'
+                : 'SOURCE: Static Training Data Only'}
+            </span>
             {lastRefreshedTime && (
               <>
                 <span className="mx-2">·</span>

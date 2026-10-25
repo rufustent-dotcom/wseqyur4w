@@ -15,6 +15,9 @@ import {
   VolumeX,
   Globe,
   BookOpen,
+  LogIn,
+  LogOut,
+  Cloud,
 } from 'lucide-react';
 import {
   SHOWCASE_VIDEOS,
@@ -24,9 +27,24 @@ import { MontyClapperEmblem } from '@/components/monty-clapper-graphic';
 import { ResearchStudio } from '@/components/research-studio';
 import { TrendingPulse } from '@/components/trending-pulse';
 import { PipelineGovernanceExplorer } from '@/components/pipeline-governance-explorer';
+import {
+  auth,
+  db,
+  sanitizeId,
+  testFirestoreConnection,
+  signInWithGoogle,
+  signOutUser,
+  saveUserPreferencesToCloud,
+  handleFirestoreError,
+  OperationType,
+} from '@/lib/firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
 export default function OpenMontagePage() {
-  const [lang, setLang] = useState<'zh' | 'en'>('zh');
+  const [lang] = useState<'zh' | 'en'>('en');
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [hasCloudSettingsDoc, setHasCloudSettingsDoc] = useState<boolean>(false);
   const [showcaseFilter, setShowcaseFilter] = useState<
     'all' | 'native-video' | 'zero-video-api' | 'single-key-ad'
   >('all');
@@ -44,12 +62,81 @@ export default function OpenMontagePage() {
     'GOOGLE_API_KEY',
   ]);
 
+  // Global Google Search Grounding Settings State (true = Live Web Data, false = Strictly Static Training Data)
+  const [useGoogleSearch, setUseGoogleSearch] = useState<boolean>(true);
+  const [showGroundingSettingsPopover, setShowGroundingSettingsPopover] =
+    useState<boolean>(false);
+
+  // Load persisted Google Search grounding preference and initialize Firebase connection & Auth listener
+  useEffect(() => {
+    testFirestoreConnection();
+    try {
+      const saved = localStorage.getItem('openmontage_google_search_grounding');
+      if (saved === 'false') {
+        setUseGoogleSearch(false);
+      } else if (saved === 'true') {
+        setUseGoogleSearch(true);
+      }
+    } catch {
+      // Ignore storage error
+    }
+
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      if (user) {
+        const safeUid = sanitizeId(user.uid);
+        const path = `users/${safeUid}/settings/global`;
+        try {
+          const snap = await getDoc(doc(db, 'users', safeUid, 'settings', 'global'));
+          if (snap.exists()) {
+            setHasCloudSettingsDoc(true);
+            const data = snap.data();
+            if (typeof data.useGoogleSearch === 'boolean') {
+              setUseGoogleSearch(data.useGoogleSearch);
+            }
+          } else {
+            setHasCloudSettingsDoc(false);
+          }
+        } catch (err) {
+          handleFirestoreError(err, OperationType.GET, path);
+        }
+      } else {
+        setHasCloudSettingsDoc(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleToggleGoogleSearch = useCallback(() => {
+    setUseGoogleSearch((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('openmontage_google_search_grounding', String(next));
+      } catch {
+        // Ignore storage error
+      }
+      if (currentUser) {
+        saveUserPreferencesToCloud({
+          userId: currentUser.uid,
+          useGoogleSearch: next,
+          lang: 'en',
+          isExisting: hasCloudSettingsDoc,
+        })
+          .then(() => setHasCloudSettingsDoc(true))
+          .catch(() => {});
+      }
+      return next;
+    });
+  }, [currentUser, hasCloudSettingsDoc]);
+
   // Close modals on ESC key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setSelectedFilmModal(null);
         setShowQuickstartModal(false);
+        setShowGroundingSettingsPopover(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -91,7 +178,7 @@ export default function OpenMontagePage() {
     <div className="min-h-screen flex flex-col bg-[#FBF9F5] text-[#1C1917]">
       {/* STRICT 3-ZONE TOP BAR CONTRACT */}
       <header className="sticky top-0 z-40 bg-[#FBF9F5]/95 backdrop-blur-xs border-b border-[#E5E0D5]">
-        <div className="max-w-[1280px] mx-auto px-6 py-4 flex items-center justify-between gap-8">
+        <div className="max-w-[1280px] mx-auto px-6 py-4 flex items-center justify-between gap-6">
           {/* Zone 1: Single-line Brand Wordmark */}
           <a
             href="#"
@@ -101,7 +188,7 @@ export default function OpenMontagePage() {
           </a>
 
           {/* Zone 2: 5 Concise Single-Line Navigation Links */}
-          <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-[#57534E]">
+          <nav className="hidden lg:flex items-center gap-7 text-sm font-medium text-[#57534E]">
             <a
               href="#showcase"
               className="hover:text-[#1C1917] hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
@@ -134,8 +221,77 @@ export default function OpenMontagePage() {
             </a>
           </nav>
 
-          {/* Zone 3: 1 Primary Action Button */}
-          <div className="flex items-center shrink-0">
+          {/* Zone 3: Global Google Search Grounding Settings Toggle + Primary Action */}
+          <div className="flex items-center gap-3 shrink-0 relative">
+            {/* Global Real-Time Google Search Grounding Toggle Switch */}
+            <div className="flex items-center rounded-lg border border-[#D6CEBE] bg-[#F3EFE6] p-1">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={useGoogleSearch}
+                onClick={handleToggleGoogleSearch}
+                title={
+                  useGoogleSearch
+                    ? lang === 'zh'
+                      ? '当前已开启实时 Google Search 联网检索（点击切换为仅静态训练数据）'
+                      : 'Real-Time Google Search Grounding is ON (Click to switch to strictly static training data)'
+                    : lang === 'zh'
+                    ? '当前仅使用静态训练数据（点击开启实时 Google Search 联网检索）'
+                    : 'Strictly Static Training Data mode is active (Click to enable live Google Search grounding)'
+                }
+                className="flex items-center gap-2 px-2.5 py-1 rounded-md text-xs font-mono transition-colors cursor-pointer hover:bg-[#E5E0D5]/70"
+              >
+                <Globe
+                  className={`w-3.5 h-3.5 shrink-0 ${
+                    useGoogleSearch ? 'text-[#15803D]' : 'text-[#B45309]'
+                  }`}
+                />
+                <span className="text-[#1C1917] font-medium whitespace-nowrap">
+                  {lang === 'zh' ? 'Google Search:' : 'Google Search:'}
+                </span>
+                <span
+                  className={`font-semibold whitespace-nowrap ${
+                    useGoogleSearch ? 'text-[#15803D]' : 'text-[#B45309]'
+                  }`}
+                >
+                  {useGoogleSearch
+                    ? lang === 'zh'
+                      ? '实时联网 (ON)'
+                      : 'LIVE WEB (ON)'
+                    : lang === 'zh'
+                    ? '静态数据 (OFF)'
+                    : 'STATIC DATA (OFF)'}
+                </span>
+                {/* Visual Switch Track */}
+                <span
+                  className={`w-7 h-4 rounded-full p-0.5 transition-colors flex items-center shrink-0 ${
+                    useGoogleSearch ? 'bg-[#15803D]' : 'bg-[#A8A29E]'
+                  }`}
+                >
+                  <span
+                    className={`w-3 h-3 rounded-full bg-[#FBF9F5] transition-transform ${
+                      useGoogleSearch ? 'translate-x-3' : 'translate-x-0'
+                    }`}
+                  />
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowGroundingSettingsPopover((s) => !s)}
+                aria-label="Data source transparency details"
+                title={
+                  lang === 'zh'
+                    ? '查看全局数据源透明度说明'
+                    : 'Inspect Global Data Source Transparency Settings'
+                }
+                className="px-1.5 py-1 text-[11px] font-mono text-[#57534E] hover:text-[#1C1917] border-l border-[#D6CEBE] cursor-pointer"
+              >
+                {lang === 'zh' ? '设置' : 'Info'}
+              </button>
+            </div>
+
+            {/* Primary Action Button */}
             <button
               type="button"
               onClick={() => setShowQuickstartModal(true)}
@@ -143,6 +299,87 @@ export default function OpenMontagePage() {
             >
               {lang === 'zh' ? '快速开始与 CLI' : 'Quickstart & CLI'}
             </button>
+
+            {/* Global Settings Transparency Popover */}
+            {showGroundingSettingsPopover && (
+              <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-xl border border-[#D6CEBE] bg-[#FBF9F5] shadow-xl p-4 z-50 text-xs">
+                <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-[#E5E0D5]">
+                  <div>
+                    <div className="font-mono uppercase tracking-wider text-[#9A3412] font-semibold">
+                      {lang === 'zh'
+                        ? '全局数据源设置 (DATA PROVENANCE)'
+                        : 'GLOBAL DATA SOURCE SETTINGS'}
+                    </div>
+                    <p className="text-[#57534E] mt-0.5">
+                      {lang === 'zh'
+                        ? '控制所有研究工作台操作的实时联网状态'
+                        : 'Controls real-time web grounding across all studio operations'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowGroundingSettingsPopover(false)}
+                    className="p-1 rounded hover:bg-[#F3EFE6] text-[#78716C] hover:text-[#1C1917] cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="mt-3 space-y-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!useGoogleSearch) handleToggleGoogleSearch();
+                    }}
+                    className={`w-full text-left p-2.5 rounded-lg border transition-colors cursor-pointer ${
+                      useGoogleSearch
+                        ? 'bg-[#F3EFE6] border-[#15803D]'
+                        : 'bg-white border-[#E5E0D5] hover:bg-[#F3EFE6]/50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between font-mono font-semibold text-[#15803D]">
+                      <span>
+                        {lang === 'zh'
+                          ? '● 实时 Google Search 联网模式 (ON)'
+                          : '● Live Google Search Grounding (ON)'}
+                      </span>
+                      {useGoogleSearch && <span>ACTIVE</span>}
+                    </div>
+                    <p className="mt-1 text-[#44403C] leading-relaxed">
+                      {lang === 'zh'
+                        ? '启用 tools: [{ googleSearch: {} }]。提案规划、脚本事实核查、时事引证智能体与流水线模拟均实时检索最新网页并提取可验证的引用链接。'
+                        : 'Attaches tools: [{ googleSearch: {} }] to gemini-3.8-flash. All studio operations fetch current web data and return verified source URLs.'}
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (useGoogleSearch) handleToggleGoogleSearch();
+                    }}
+                    className={`w-full text-left p-2.5 rounded-lg border transition-colors cursor-pointer ${
+                      !useGoogleSearch
+                        ? 'bg-[#FFFBEB] border-[#D97706]'
+                        : 'bg-white border-[#E5E0D5] hover:bg-[#F3EFE6]/50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between font-mono font-semibold text-[#B45309]">
+                      <span>
+                        {lang === 'zh'
+                          ? '○ 仅静态模型训练数据模式 (OFF)'
+                          : '○ Strictly Static Training Data (OFF)'}
+                      </span>
+                      {!useGoogleSearch && <span>ACTIVE</span>}
+                    </div>
+                    <p className="mt-1 text-[#44403C] leading-relaxed">
+                      {lang === 'zh'
+                        ? '完全禁用外部联网搜索。AI 严格仅使用预训练静态权重回答，不产生外部网页请求，并在简报中透明标注静态数据局限。'
+                        : 'Disables live Google Search completely. The AI relies strictly on static pre-trained weights and transparently flags time-sensitive claims.'}
+                    </p>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -151,13 +388,23 @@ export default function OpenMontagePage() {
       <div className="border-b border-[#E5E0D5] bg-[#F3EFE6]/60">
         <div className="max-w-[1280px] mx-auto px-6 py-2.5 flex flex-wrap items-center justify-between gap-4 text-xs">
           <div className="flex flex-wrap items-center gap-2 text-[#57534E] font-mono">
-            <span>Monty the Clapper — 官方吉祥物</span>
+            <span>Monty the Clapper — Official Mascot</span>
             <span>·</span>
             <span className="text-[#9A3412] font-semibold">
               #1 on GitHub Trending (Repository of the Day)
             </span>
             <span>·</span>
-            <span>License: GNU AGPLv3</span>
+            <span
+              className={
+                useGoogleSearch
+                  ? 'text-[#15803D] font-semibold'
+                  : 'text-[#B45309] font-semibold'
+              }
+            >
+              {useGoogleSearch
+                ? 'DATA: LIVE GOOGLE SEARCH'
+                : 'DATA: STATIC TRAINING WEIGHTS ONLY'}
+            </span>
           </div>
 
           <div className="flex items-center gap-4">
@@ -181,31 +428,32 @@ export default function OpenMontagePage() {
               <ExternalLink className="w-3 h-3" />
             </a>
             <span className="text-[#D6CEBE]">·</span>
-            {/* Language Switcher in Workspace Toolbar */}
-            <div className="inline-flex items-center gap-1 p-0.5 bg-[#E5E0D5] rounded-md">
+            {/* Cloud Persistence Sign-In / Sign-Out Control */}
+            {currentUser ? (
+              <div className="inline-flex items-center gap-2 font-mono">
+                <span className="inline-flex items-center gap-1 text-[#15803D] font-semibold">
+                  <Cloud className="w-3.5 h-3.5" />
+                  Cloud Sync ({currentUser.displayName || currentUser.email || 'Signed In'})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => signOutUser().catch(() => {})}
+                  className="px-2 py-0.5 rounded border border-[#D6CEBE] bg-[#FBF9F5] hover:bg-[#E5E0D5] text-[#1C1917] inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <LogOut className="w-3 h-3" />
+                  Sign Out
+                </button>
+              </div>
+            ) : (
               <button
                 type="button"
-                onClick={() => setLang('zh')}
-                className={`px-2 py-0.5 text-[11px] font-mono rounded transition-colors cursor-pointer ${
-                  lang === 'zh'
-                    ? 'bg-[#FBF9F5] text-[#1C1917] font-semibold'
-                    : 'text-[#57534E]'
-                }`}
+                onClick={() => signInWithGoogle().catch(() => {})}
+                className="px-2.5 py-1 rounded border border-[#D6CEBE] bg-[#FBF9F5] hover:bg-[#E5E0D5] text-[#1C1917] font-mono inline-flex items-center gap-1.5 cursor-pointer"
               >
-                中文
+                <LogIn className="w-3 h-3 text-[#9A3412]" />
+                Sign In to Sync History
               </button>
-              <button
-                type="button"
-                onClick={() => setLang('en')}
-                className={`px-2 py-0.5 text-[11px] font-mono rounded transition-colors cursor-pointer ${
-                  lang === 'en'
-                    ? 'bg-[#FBF9F5] text-[#1C1917] font-semibold'
-                    : 'text-[#57534E]'
-                }`}
-              >
-                EN
-              </button>
-            </div>
+            )}
           </div>
         </div>
       </div>
@@ -332,7 +580,7 @@ export default function OpenMontagePage() {
                       </span>
                       <span className="mx-2 text-white/40">·</span>
                       <span className="font-mono text-[11px]">
-                        概念 → 剧本 → 场景规划 → Veo 镜头 → 配乐 → Remotion 合成
+                        Concept → Screenplay → Scene Plan → Veo Clips → Score → Remotion Render
                       </span>
                     </div>
 
@@ -538,22 +786,28 @@ export default function OpenMontagePage() {
         {/* SECTION 02: GOOGLE SEARCH GROUNDED RESEARCH, PROPOSAL & FACT-CHECK STUDIO */}
         <ResearchStudio
           lang={lang}
+          userId={currentUser?.uid || null}
           externalPrompt={studioExternalPrompt}
           externalReference={studioExternalReference}
           availableKeys={availableKeys}
+          useGoogleSearch={useGoogleSearch}
+          onToggleGoogleSearch={handleToggleGoogleSearch}
           onClearExternalPrompt={handleClearExternalPrompt}
         />
 
         {/* SECTION 03: LIVE TRENDING VIDEO TOPICS PULSE (GOOGLE SEARCH GROUNDED) */}
         <TrendingPulse
           lang={lang}
+          useGoogleSearch={useGoogleSearch}
           onLoadTopicIntoStudio={handleLoadIntoStudio}
         />
 
         {/* SECTION 04 & 05: 12 PIPELINES, 7 STAGES & 7-DIM PROVIDER SCORING SIMULATOR */}
         <PipelineGovernanceExplorer
           lang={lang}
+          userId={currentUser?.uid || null}
           availableKeys={availableKeys}
+          useGoogleSearch={useGoogleSearch}
           onToggleKey={handleToggleKey}
           onResetZeroKeys={handleResetZeroKeys}
           onSelectPipelinePrompt={(prompt, referenceNote) =>

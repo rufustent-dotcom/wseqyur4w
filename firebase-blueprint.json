@@ -1,0 +1,249 @@
+{
+  "entities": {
+    "ResearchBrief": {
+      "title": "ResearchBrief",
+      "description": "A research briefing, script fact-check report, or current events news citation generated in the OpenMontage Research Studio.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The authenticated owner UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "mode": {
+          "type": "string",
+          "description": "The studio agent mode used to generate the briefing.",
+          "enum": ["proposal", "fact-check", "news-agent"],
+          "maxLength": 32
+        },
+        "query": {
+          "type": "string",
+          "description": "The user prompt, script, or topic query.",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "referenceVideo": {
+          "type": "string",
+          "description": "Optional reference video URL or pacing notes.",
+          "maxLength": 1000
+        },
+        "markdown": {
+          "type": "string",
+          "description": "The generated Markdown briefing content.",
+          "minLength": 1,
+          "maxLength": 30000
+        },
+        "citationsCount": {
+          "type": "number",
+          "description": "Count of verified Google Search citations attached to the brief."
+        },
+        "pinned": {
+          "type": "boolean",
+          "description": "Whether the user pinned this briefing to the top of Recent Searches."
+        },
+        "groundingMode": {
+          "type": "string",
+          "description": "Indicates whether live Google Search grounding or static training data was used.",
+          "enum": ["live-web", "static-training"],
+          "maxLength": 32
+        },
+        "createdAtLabel": {
+          "type": "string",
+          "description": "Human-readable timestamp label.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "userId",
+        "mode",
+        "query",
+        "referenceVideo",
+        "markdown",
+        "citationsCount",
+        "pinned",
+        "groundingMode",
+        "createdAtLabel",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PipelineAttempt": {
+      "title": "PipelineAttempt",
+      "description": "A recorded or simulated OpenMontage pipeline execution attempt with governance gate and cost audit metadata.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The authenticated owner UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "runCode": {
+          "type": "string",
+          "description": "Run identifier code (e.g., OM-RUN-847).",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "pipelineId": {
+          "type": "string",
+          "description": "Identifier of the OpenMontage pipeline.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "pipelineNameZh": {
+          "type": "string",
+          "description": "Chinese name of the pipeline.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "pipelineNameEn": {
+          "type": "string",
+          "description": "English name of the pipeline.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Production prompt executed in the pipeline.",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "runtime": {
+          "type": "string",
+          "description": "Locked render runtime.",
+          "enum": ["Remotion", "HyperFrames", "FFmpeg"],
+          "maxLength": 32
+        },
+        "status": {
+          "type": "string",
+          "description": "Execution outcome status.",
+          "enum": ["completed", "fallback", "failed"],
+          "maxLength": 32
+        },
+        "statusLabelZh": {
+          "type": "string",
+          "description": "Chinese status label.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "statusLabelEn": {
+          "type": "string",
+          "description": "English status label.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "durationSec": {
+          "type": "number",
+          "description": "Target video duration in seconds."
+        },
+        "estimatedCost": {
+          "type": "string",
+          "description": "Estimated USD cost.",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "settledCost": {
+          "type": "string",
+          "description": "Settled USD cost.",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "groundedSummary": {
+          "type": "string",
+          "description": "Stage 01 research and fact-check audit summary.",
+          "minLength": 1,
+          "maxLength": 5000
+        },
+        "startedAtLabel": {
+          "type": "string",
+          "description": "Formatted timestamp string for display.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        }
+      },
+      "required": [
+        "userId",
+        "runCode",
+        "pipelineId",
+        "pipelineNameZh",
+        "pipelineNameEn",
+        "prompt",
+        "runtime",
+        "status",
+        "statusLabelZh",
+        "statusLabelEn",
+        "durationSec",
+        "estimatedCost",
+        "settledCost",
+        "groundedSummary",
+        "startedAtLabel",
+        "createdAt"
+      ]
+    },
+    "UserPreferences": {
+      "title": "UserPreferences",
+      "description": "Global workspace preferences for an authenticated user, including Google Search grounding toggle and language.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The authenticated owner UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "useGoogleSearch": {
+          "type": "boolean",
+          "description": "Whether real-time Google Search grounding is enabled globally."
+        },
+        "lang": {
+          "type": "string",
+          "description": "Preferred UI language.",
+          "enum": ["zh", "en"],
+          "maxLength": 8
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": ["userId", "useGoogleSearch", "lang", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/researchBriefs/{briefId}": {
+      "schema": "ResearchBrief",
+      "description": "Stores user-specific Research Studio briefings, fact-check audits, and news citation reports."
+    },
+    "/users/{userId}/pipelineAttempts/{attemptId}": {
+      "schema": "PipelineAttempt",
+      "description": "Stores user-specific simulated and historical OpenMontage pipeline runs."
+    },
+    "/users/{userId}/settings/{settingId}": {
+      "schema": "UserPreferences",
+      "description": "Stores user-specific global settings such as the Google Search grounding toggle and UI language."
+    }
+  }
+}

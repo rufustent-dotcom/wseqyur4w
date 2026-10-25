@@ -30,6 +30,16 @@ import {
   CuratedPrompt,
   GroundedCitation,
 } from '@/lib/openmontage-data';
+import {
+  db,
+  sanitizeId,
+  handleFirestoreError,
+  OperationType,
+  saveResearchBriefToCloud,
+  updateResearchBriefPinInCloud,
+  deleteResearchBriefFromCloud,
+} from '@/lib/firebase';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 
 export interface SavedResearchBrief {
   id: string;
@@ -40,13 +50,17 @@ export interface SavedResearchBrief {
   citations: GroundedCitation[];
   createdAt: string;
   pinned?: boolean;
+  groundingMode?: 'live-web' | 'static-training';
 }
 
 interface ResearchStudioProps {
   lang: 'zh' | 'en';
+  userId?: string | null;
   externalPrompt: string;
   externalReference: string;
   availableKeys: string[];
+  useGoogleSearch: boolean;
+  onToggleGoogleSearch: () => void;
   onClearExternalPrompt: () => void;
 }
 
@@ -55,11 +69,12 @@ const INITIAL_RECENT_SEARCHES: SavedResearchBrief[] = [
     id: 'preload-neural-net',
     mode: 'proposal',
     query:
-      '制作一个 60 秒的动画解说视频，讲解神经网络是如何学习的 (How Neural Networks Learn via Backpropagation)',
+      'Make a 60-second animated explainer on how neural networks learn via backpropagation',
     referenceVideo:
       '3Blue1Brown visual intuition cadence + crisp kinetic data overlays',
     createdAt: '2026-10-22 18:00',
     pinned: true,
+    groundingMode: 'live-web',
     citations: [
       {
         title: 'Deep Learning & Backpropagation Visual Foundations — Stanford CS231n',
@@ -74,35 +89,36 @@ const INITIAL_RECENT_SEARCHES: SavedResearchBrief[] = [
         uri: 'https://archive.org/details/movies',
       },
     ],
-    markdown: `## 01. 实时网络研究简报 (Live Web Research Brief)
-- **核心机制验证**：神经网络通过前向传播（Forward Pass）计算预测值，利用损失函数（Loss Function，如交叉熵或均方误差）量化误差，并通过反向传播算法（Backpropagation）应用链式法则计算梯度，最后由优化器（如 AdamW）更新权重参数。
-- **受众核心痛点**：初学者常将“梯度下降”误解为尝试所有可能组合；最有效的视觉钩子是展示**“从随机噪点在 4 次迭代内收敛为清晰手写数字识别”**的实时权重矩阵变化。
+    markdown: `## 01. Live Web Research Brief
+- **Core Mechanism Verified**: Neural networks compute predictions via a forward pass, quantify prediction error using a loss function (such as cross-entropy or mean squared error), apply the chain rule backward through the network via backpropagation to compute gradients, and update weight matrices using an optimizer like AdamW.
+- **Audience Hook & Misconception**: Viewers often mistake gradient descent for brute-force guessing; the strongest visual hook is showing **random static noise converging into crisp handwritten digit recognition within 4 iterations** as weights update in real time.
 
-## 02. 流水线与渲染引擎锁定 (Pipeline & Render Runtime Lock)
-- **选定流水线 (Selected Pipeline)**：\`动画解说 (Animated Explainer)\` —— 最适合包含数学推演、实时权重可视化与词级字幕的教学内容。
-- **锁定渲染运行时 (\`render_runtime\`)**：\`Remotion\`（React 编程式视频引擎，支持弹簧物理动画、实时损失曲线图表与 TikTok 风格逐词高亮字幕）。
-- **7 维度评分提供商选择与成本预估**：
-  - **视觉/图表**：Remotion 原生数据卡片 + ManimCE / FLUX 关键帧（预估成本：**$0.00 – $0.15**）
-  - **旁白配音**：Piper 离线神经 TTS（$0.00）或 Google Chirp3-HD（$0.12）
-  - **总预估成本**：**$0.00（零密钥模式）** 或 **$0.27（云端增强模式）**
+## 02. Pipeline & Render Runtime Lock
+- **Selected Pipeline**: \`Animated Explainer\` — Optimal for mathematical intuition, live weight matrix visualization, and synchronized word-level captions.
+- **Locked \`render_runtime\`**: \`Remotion\` (React programmatic video engine supporting spring physics, dynamic loss-curve charts, and TikTok-style word-level caption highlighting).
+- **7-Dimension Provider Selection & Cost Estimate**:
+  - **Visuals & Charts**: Remotion native data cards + ManimCE / FLUX keyframes (Estimated cost: **$0.00 – $0.15**)
+  - **Narration Voiceover**: Piper offline neural TTS ($0.00) or Google Chirp3-HD ($0.12)
+  - **Total Estimated Cost**: **$0.00 (Zero-Key Mode)** or **$0.27 (Cloud-Enhanced Mode)**
 
-## 03. 三个差异化创意方案 (3 Differentiated Production Concepts)
-1. **方案 A：调音师隐喻 (The 10,000-Knob Mixing Console)** — 将神经网络比作拥有一万个旋钮的调音台，每次猜错后，反向传播就像一双沿着误差信号往回微调每个旋钮的手。
-2. **方案 B：高山盲降 (Foggy Mountain Descent)** — 聚焦损失地形（Loss Landscape），用等高线与动量小球直观解释学习率（Learning Rate）过大或过小的后果。
-3. **方案 C：拆解单个人工神经元 (Inside a Single Perceptron)** — 从单个生物突触对比切入，60 秒内完成从输入像素、加权求和、ReLU 激活到梯度修正的闭环。
+## 03. 3 Differentiated Production Concepts
+1. **Concept A: The 10,000-Knob Mixing Console** — Frame a neural network as a studio mixing board with 10,000 dials; after every wrong prediction, backpropagation traces the error signal backward to nudge each dial in the right direction.
+2. **Concept B: Foggy Mountain Descent** — Focus on the 3D loss landscape using topographic contour lines and a momentum ball to show why learning rate size matters.
+3. **Concept C: Inside a Single Perceptron** — Start with a single artificial neuron, completing the full loop from input pixels, weighted sum, and ReLU activation to gradient correction in 60 seconds.
 
-## 04. 质量检验门与防 PPT 风险策略 (Quality Gates & Anti-PPT Risk Plan)
-- **6 维度 PPT 风险得分**：\`0.14 / 1.00 (LOW RISK)\` —— 静态图片占比低于 20%，全片由连续参数弹簧动画与动态损失图表驱动。
-- **渲染后自我审查**：自动执行 \`ffprobe\` 容器校验、4 点抽帧检查文字遮挡、以及 \`-14 LUFS\` 响度与字幕同步核验。`,
+## 04. Quality Gates & Anti-PPT Risk Plan
+- **6-Dimension PPT Risk Score**: \`0.14 / 1.00 (LOW RISK)\` — Static image ratio stays below 20%, driven by continuous spring animations and reactive loss curves.
+- **Post-Render Self-Review**: Automatically executes \`ffprobe\` container validation, 4-point frame extraction to inspect text overlap, and \`-14 LUFS\` loudness and caption sync checks.`,
   },
   {
     id: 'preload-4am-city-doc',
     mode: 'proposal',
     query:
-      '制作一部 75 秒的纪录片蒙太奇，展现雨中的城市生活。只使用真实素材，无旁白，需要一种挽歌般的基调和配乐。',
+      'Make a 75-second documentary montage about urban life in the rain. Use real footage only, no narration, with an elegiac tone and score.',
     referenceVideo: 'Koyaanisqatsi / Nocturnal urban tone poem · Native footage only',
     createdAt: '2026-10-22 17:42',
     pinned: false,
+    groundingMode: 'live-web',
     citations: [
       {
         title: 'Prelinger Archives & Open Urban Footage — Internet Archive',
@@ -113,27 +129,28 @@ const INITIAL_RECENT_SEARCHES: SavedResearchBrief[] = [
         uri: 'https://commons.wikimedia.org/wiki/Category:Videos',
       },
     ],
-    markdown: `## 01. 实时网络研究简报 (Live Web Research Brief)
-- **真实档案语料库覆盖**：通过 CLIP 语义检索可从 \`Archive.org\`、\`Wikimedia Commons\` 与 \`Pexels\` 提取超过 140 段无版权高清夜间雨景、霓虹倒影、地铁末班车与清晨市政洒水车实拍镜头。
-- **视听节奏设计**：无旁白音画诗（Tone Poem）依赖环境声（雨滴敲击金属、远处电车轨道共鸣）与大提琴慢板配乐的呼吸感，最佳平均镜头时长（ASL）为 \`3.8 秒\`。
+    markdown: `## 01. Live Web Research Brief
+- **Archival Corpus Coverage**: Semantic CLIP retrieval across \`Archive.org\`, \`Wikimedia Commons\`, and \`Pexels\` surfaces over 140 royalty-free HD clips of nocturnal rain, neon reflections on wet asphalt, late-night subway platforms, and early-morning street sweepers.
+- **Audiovisual Pacing**: A narration-free tone poem relies on ambient sound design (rain on metal awnings, distant tram rails) paired with a slow cello adagio at an average shot length (ASL) of \`3.8 seconds\`.
 
-## 02. 流水线与渲染引擎锁定 (Pipeline & Render Runtime Lock)
-- **选定流水线 (Selected Pipeline)**：\`纪录片蒙太奇 (Documentary Montage)\` —— 强制启用 \`promise: native_motion_footage_only\`，严禁使用静态图片加推拉镜头伪装视频。
-- **锁定渲染运行时 (\`render_runtime\`)**：\`FFmpeg\`（原生多轨视频拼接、胶片级交叉叠化 \`film_dissolve\` 与 16mm 档案色彩 LUT 调色）。
-- **预估成本**：**$0.00 (100% 免费开源档案与本地合成)**。
+## 02. Pipeline & Render Runtime Lock
+- **Selected Pipeline**: \`Documentary Montage\` — Enforces \`promise: native_motion_footage_only\`, strictly prohibiting static images with Ken Burns pans from masquerading as video.
+- **Locked \`render_runtime\`**: \`FFmpeg\` (native multi-track video stitching, \`film_dissolve\` crossfades, and 16mm archival LUT color grading).
+- **Estimated Cost**: **$0.00 (100% Free Open Archives & Local Composition)**.
 
-## 03. 三个差异化创意方案 (3 Differentiated Production Concepts)
-1. **方案 A：霓虹与沥青 (Neon & Wet Asphalt)** — 从午夜 00:00 的积水倒影切入，过渡到凌晨 04:00 的空旷立交桥与早班烘焙坊蒸汽。
-2. **方案 B：信号灯的独白 (Traffic Lights for No One)** — 聚焦雨夜中无人十字路口规律变换的红绿灯与雨刷器节拍，构成机械与自然的视觉对位。
-3. **方案 C：归途列车 (Last Train Home)** — 以车窗外的雨水流淌轨迹为主视觉线索，串联城市边缘的灯火。`,
+## 03. 3 Differentiated Production Concepts
+1. **Concept A: Neon & Wet Asphalt** — Open on midnight puddle reflections and transition to 4:00 AM empty overpasses and early bakery steam.
+2. **Concept B: Traffic Lights for No One** — Focus on rhythmic traffic signals changing at empty rain-soaked intersections counterpointed against windshield wipers.
+3. **Concept C: Last Train Home** — Follow rain streaks across commuter train windows linking the glowing geometry of the city outskirts.`,
   },
   {
     id: 'preload-crispr-factcheck',
     mode: 'fact-check',
     query:
-      '在 60 秒解说脚本中：CRISPR-Cas9 技术最早于 1995 年在人类细胞中完成首次基因编辑临床试验，它通过 RNA 引导酶直接合成全新的 DNA 链...',
+      'In a 60-second explainer script: CRISPR-Cas9 completed its first human clinical gene-editing trial in 1995, and it works by using an RNA-guided enzyme to synthesize brand-new DNA strands from scratch...',
     createdAt: '2026-10-22 17:15',
     pinned: false,
+    groundingMode: 'live-web',
     citations: [
       {
         title: 'Nobel Prize in Chemistry 2020 — Genetic Scissors (Charpentier & Doudna)',
@@ -144,42 +161,45 @@ const INITIAL_RECENT_SEARCHES: SavedResearchBrief[] = [
         uri: 'https://www.broadinstitute.org/what-broad/areas-focus/project-spotlight/questions-and-answers-about-crispr',
       },
     ],
-    markdown: `## 核验结论 (Verification Verdict)
-- **UNVERIFIED / HIGH RISK (存在事实错误 — 已拦截进入合成阶段)**
+    markdown: `## Verification Verdict
+- **UNVERIFIED / HIGH RISK (Factual Errors Detected — Blocked Prior to Composition)**
 
-## 执行摘要 (Executive Production Summary)
-- **核心修正**：原脚本混淆了细菌免疫机制发现时间与人类临床试验年份，且对 Cas9 作用机理描述有误。
-- **时长预估**：修正后旁白约 140 词，按 145 WPM 语速适配 \`60 秒\` 动画解说。
-- **视觉建议**：使用 \`Remotion\` 分步展示向导 RNA (gRNA) 匹配目标序列与 Cas9 核酸内切酶双链切割过程。
+## Executive Production Summary
+- **Core Correction**: The draft script conflates early bacterial repeat observations with human clinical trial dates and misstates the molecular mechanism of Cas9.
+- **Duration Estimate**: The revised narration is ~140 words, fitting a \`60-second\` Animated Explainer at 145 WPM.
+- **Visual Recommendation**: Use \`Remotion\` to step through guide RNA (gRNA) target matching and Cas9 double-stranded DNA cleavage.
 
-## 逐项事实审计与修正建议 (Claim-by-Claim Grounded Audit)
-1. **原论断**：“最早于 1995 年在人类细胞中完成首次基因编辑临床试验”
-   - **核实事实**：2012 年 Jennifer Doudna 与 Emmanuelle Charpentier 发表里程碑论文证明 CRISPR-Cas9 可编程切割 DNA；2013 年张锋等人首次将其应用于人类与小鼠真核细胞；首个人体临床试验于 **2016 年** 开展。
-   - **修正旁白**：“2012 年，科学家成功将细菌的天然免疫系统转化为可编程的基因剪刀 CRISPR-Cas9，并在随后数年内开启了人类医学临床试验的新纪元。”
-2. **原论断**：“通过 RNA 引导酶直接合成全新的 DNA 链，无需导向序列即可实现 100% 零脱靶”
-   - **核实事实**：Cas9 负责**精准切割**双链 DNA（而非从头合成 DNA），且必须依赖 **向导 RNA (gRNA)** 定位目标序列；脱靶效应虽已大幅降低但仍非绝对 0%。`,
+## Claim-by-Claim Grounded Audit
+1. **Original Claim**: "Completed its first human clinical gene-editing trial in 1995"
+   - **Verified Fact**: Jennifer Doudna and Emmanuelle Charpentier published their landmark paper demonstrating programmable CRISPR-Cas9 DNA cleavage in **2012**; eukaryotic human cell editing followed in **2013**, and the first human clinical trials began in **2016**.
+   - **Revised Narration**: "In 2012, scientists transformed a bacterial immune defense into the programmable genetic scissors known as CRISPR-Cas9, launching human clinical trials within just four years."
+2. **Original Claim**: "Uses an RNA-guided enzyme to synthesize brand-new DNA strands from scratch with 100% zero off-target edits without a guide sequence"
+   - **Verified Fact**: Cas9 **cleaves (cuts)** existing double-stranded DNA rather than synthesizing new DNA from scratch, and it strictly requires a **guide RNA (gRNA)** to locate the target sequence.`,
   },
 ];
 
 export function ResearchStudio({
   lang,
+  userId,
   externalPrompt,
   externalReference,
   availableKeys,
+  useGoogleSearch,
+  onToggleGoogleSearch,
   onClearExternalPrompt,
 }: ResearchStudioProps) {
   const [activeTab, setActiveTab] = useState<'proposal' | 'fact-check' | 'news-agent'>(
     'proposal'
   );
   const [promptInput, setPromptInput] = useState(
-    '制作一个 60 秒的动画解说视频，讲解神经网络是如何学习的'
+    'Make a 60-second animated explainer on how neural networks learn via backpropagation'
   );
   const [referenceInput, setReferenceInput] = useState('');
   const [factCheckInput, setFactCheckInput] = useState(
-    '在 60 秒解说脚本中：CRISPR-Cas9 技术最早于 1995 年在人类细胞中完成首次基因编辑临床试验，它通过 RNA 引导酶直接合成全新的 DNA 链，目前无需任何导向序列即可实现 100% 零脱靶编辑。'
+    'In a 60-second explainer script: CRISPR-Cas9 completed its first human clinical gene-editing trial in 1995, and it works by using an RNA-guided enzyme to synthesize brand-new DNA strands from scratch with 100% zero off-target edits without any guide sequence.'
   );
   const [newsAgentInput, setNewsAgentInput] = useState(
-    '检索近期关于固态电池、商业航天或开源视频大模型的新闻进展，引用权威报道并给出一部 60 秒视频的事实脚本切入点。'
+    'Search for recent breakthroughs in solid-state EV batteries, commercial spaceflight, or open-source video generation models, cite authoritative sources, and propose a 60-second video script angle.'
   );
   const [promptGroupFilter, setPromptGroupFilter] = useState<string>('all');
 
@@ -207,6 +227,7 @@ export function ResearchStudio({
     markdown: string;
     citations: GroundedCitation[];
     timestamp: string;
+    groundingMode?: 'live-web' | 'static-training';
   }>({
     id: INITIAL_RECENT_SEARCHES[0].id,
     mode: INITIAL_RECENT_SEARCHES[0].mode,
@@ -215,6 +236,7 @@ export function ResearchStudio({
     markdown: INITIAL_RECENT_SEARCHES[0].markdown,
     citations: INITIAL_RECENT_SEARCHES[0].citations,
     timestamp: INITIAL_RECENT_SEARCHES[0].createdAt,
+    groundingMode: INITIAL_RECENT_SEARCHES[0].groundingMode || 'live-web',
   });
 
   const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
@@ -223,7 +245,7 @@ export function ResearchStudio({
   // Load recent searches from localStorage
   useEffect(() => {
     try {
-      const raw = localStorage.getItem('openmontage_recent_searches_v2');
+      const raw = localStorage.getItem('openmontage_recent_searches_en_v1');
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -235,10 +257,71 @@ export function ResearchStudio({
     }
   }, []);
 
+  // Real-time Firestore listener when user is authenticated
+  useEffect(() => {
+    if (!userId) return;
+    const safeUid = sanitizeId(userId);
+    const path = `users/${safeUid}/researchBriefs`;
+    const q = query(
+      collection(db, 'users', safeUid, 'researchBriefs'),
+      where('userId', '==', safeUid)
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        if (snapshot.empty) return;
+        const cloudBriefs: SavedResearchBrief[] = snapshot.docs.map((docSnap) => {
+          const d = docSnap.data();
+          return {
+            id: docSnap.id,
+            mode:
+              d.mode === 'fact-check' || d.mode === 'news-agent'
+                ? d.mode
+                : 'proposal',
+            query: String(d.query || ''),
+            referenceVideo: d.referenceVideo ? String(d.referenceVideo) : undefined,
+            markdown: String(d.markdown || ''),
+            citations: [],
+            createdAt: String(d.createdAtLabel || 'Cloud Synced'),
+            pinned: Boolean(d.pinned),
+            groundingMode:
+              d.groundingMode === 'static-training' ? 'static-training' : 'live-web',
+          };
+        });
+
+        setRecentSearches((prev) => {
+          const byId = new Map<string, SavedResearchBrief>();
+          for (const item of cloudBriefs) {
+            const localMatch = prev.find((p) => p.id === item.id);
+            byId.set(item.id, {
+              ...item,
+              citations:
+                localMatch && localMatch.citations.length > 0
+                  ? localMatch.citations
+                  : item.citations,
+            });
+          }
+          for (const localItem of prev) {
+            if (!byId.has(localItem.id)) {
+              byId.set(localItem.id, localItem);
+            }
+          }
+          return Array.from(byId.values()).slice(0, 25);
+        });
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, path);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [userId]);
+
   const persistRecentSearches = (items: SavedResearchBrief[]) => {
     setRecentSearches(items);
     try {
-      localStorage.setItem('openmontage_recent_searches_v2', JSON.stringify(items));
+      localStorage.setItem('openmontage_recent_searches_en_v1', JSON.stringify(items));
     } catch {
       // Ignore storage errors
     }
@@ -261,8 +344,12 @@ export function ResearchStudio({
     targetMode: 'proposal' | 'fact-check' | 'news-agent';
     queryText: string;
     refText?: string;
+    overrideGrounding?: boolean;
   }) => {
-    const { targetMode, queryText, refText = '' } = params;
+    const { targetMode, queryText, refText = '', overrideGrounding } = params;
+    const effectiveGrounding =
+      typeof overrideGrounding === 'boolean' ? overrideGrounding : useGoogleSearch;
+
     if (!queryText.trim()) {
       setErrorMsg(
         lang === 'zh'
@@ -285,6 +372,7 @@ export function ResearchStudio({
           referenceVideo: targetMode === 'proposal' ? refText.trim() : '',
           availableKeys,
           language: lang,
+          useGoogleSearch: effectiveGrounding,
         }),
       });
 
@@ -300,6 +388,11 @@ export function ResearchStudio({
         minute: '2-digit',
       });
 
+      const resolvedGroundingMode: 'live-web' | 'static-training' =
+        data.groundingEnabled === false || !effectiveGrounding
+          ? 'static-training'
+          : 'live-web';
+
       const newEntryId = `search-${Date.now()}`;
       const newEntry: SavedResearchBrief = {
         id: newEntryId,
@@ -311,6 +404,7 @@ export function ResearchStudio({
         citations: data.citations || [],
         createdAt: nowStr,
         pinned: false,
+        groundingMode: resolvedGroundingMode,
       };
 
       setCurrentResult({
@@ -321,6 +415,7 @@ export function ResearchStudio({
         markdown: newEntry.markdown,
         citations: newEntry.citations,
         timestamp: nowStr,
+        groundingMode: resolvedGroundingMode,
       });
       setActiveBriefId(newEntryId);
 
@@ -328,18 +423,39 @@ export function ResearchStudio({
       const existingPinned = recentSearches.find(
         (item) => item.query === newEntry.query && item.pinned
       );
+      const isPinned = Boolean(existingPinned);
       const updatedList = [
-        { ...newEntry, pinned: Boolean(existingPinned) },
+        { ...newEntry, pinned: isPinned },
         ...recentSearches.filter((item) => item.query !== newEntry.query),
       ].slice(0, 25);
 
       persistRecentSearches(updatedList);
+
+      // Sync to Firestore if signed in
+      if (userId) {
+        try {
+          await saveResearchBriefToCloud({
+            userId,
+            briefId: newEntryId,
+            mode: targetMode,
+            query: newEntry.query,
+            referenceVideo: newEntry.referenceVideo,
+            markdown: newEntry.markdown,
+            citationsCount: newEntry.citations.length,
+            pinned: isPinned,
+            groundingMode: resolvedGroundingMode,
+            createdAtLabel: nowStr,
+          });
+        } catch {
+          // Handled by handleFirestoreError
+        }
+      }
     } catch (err: any) {
       setErrorMsg(
         err?.message ||
           (lang === 'zh'
-            ? 'Google Search 实时检索请求失败，请检查网络连接或 API 密钥配置。'
-            : 'Google Search grounding request failed. Please verify your connection or API key.')
+            ? '研究请求执行失败，请检查网络连接或 API 密钥配置。'
+            : 'Research request failed. Please verify your connection or API key.')
       );
     } finally {
       setIsLoading(false);
@@ -366,11 +482,12 @@ export function ResearchStudio({
       markdown: item.markdown,
       citations: item.citations,
       timestamp: item.createdAt,
+      groundingMode: item.groundingMode || 'live-web',
     });
     setIsDrawerOpen(false);
   };
 
-  // Re-invoke (re-run) a past search prompt against live Google Search
+  // Re-invoke (re-run) a past search prompt using current grounding setting
   const handleReinvokePastSearch = (item: SavedResearchBrief) => {
     setActiveTab(item.mode);
     if (item.mode === 'proposal') {
@@ -389,16 +506,39 @@ export function ResearchStudio({
     });
   };
 
-  const handleTogglePinBrief = (id: string) => {
+  const handleTogglePinBrief = async (id: string) => {
+    const target = recentSearches.find((item) => item.id === id);
+    const nextPinned = target ? !target.pinned : true;
     const updated = recentSearches.map((item) =>
-      item.id === id ? { ...item, pinned: !item.pinned } : item
+      item.id === id ? { ...item, pinned: nextPinned } : item
     );
     persistRecentSearches(updated);
+    if (userId && !id.startsWith('preload-')) {
+      try {
+        await updateResearchBriefPinInCloud({
+          userId,
+          briefId: id,
+          pinned: nextPinned,
+        });
+      } catch {
+        // Handled by handleFirestoreError
+      }
+    }
   };
 
-  const handleDeleteBrief = (id: string) => {
+  const handleDeleteBrief = async (id: string) => {
     const updated = recentSearches.filter((b) => b.id !== id);
     persistRecentSearches(updated);
+    if (userId && !id.startsWith('preload-')) {
+      try {
+        await deleteResearchBriefFromCloud({
+          userId,
+          briefId: id,
+        });
+      } catch {
+        // Handled by handleFirestoreError
+      }
+    }
   };
 
   const handleClearUnpinnedHistory = () => {
@@ -518,12 +658,13 @@ export function ResearchStudio({
         {filteredRecentSearches.length === 0 ? (
           <div className="py-10 text-center text-xs text-[#78716C]">
             {lang === 'zh'
-              ? '没有匹配的检索记录。运行一次实时网络研究即可自动存档。'
+              ? '没有匹配的检索记录。运行一次研究即可自动存档。'
               : 'No matching recent searches found. Run a query to auto-save it here.'}
           </div>
         ) : (
           filteredRecentSearches.map((item) => {
             const isSelected = item.id === activeBriefId;
+            const isItemStatic = item.groundingMode === 'static-training';
             return (
               <div
                 key={item.id}
@@ -550,6 +691,16 @@ export function ResearchStudio({
                         : item.mode === 'fact-check'
                         ? 'FACT-CHECK'
                         : 'NEWS-AGENT'}
+                    </span>
+                    <span>·</span>
+                    <span
+                      className={
+                        isItemStatic
+                          ? 'text-[#B45309] font-semibold'
+                          : 'text-[#15803D]'
+                      }
+                    >
+                      {isItemStatic ? 'STATIC' : 'LIVE WEB'}
                     </span>
                     <span>·</span>
                     <span className="tabular-nums">{item.citations.length} srcs</span>
@@ -595,7 +746,7 @@ export function ResearchStudio({
                   </p>
                 )}
 
-                {/* Action Footer: View Cached Briefing OR Re-Invoke Live Search */}
+                {/* Action Footer: View Cached Briefing OR Re-Invoke Search */}
                 <div className="mt-2.5 pt-2 border-t border-[#E5E0D5] flex items-center justify-between gap-2">
                   <span className="text-[10px] font-mono text-[#78716C] inline-flex items-center gap-1 tabular-nums">
                     <Clock className="w-2.5 h-2.5" />
@@ -616,13 +767,13 @@ export function ResearchStudio({
                       onClick={() => handleReinvokePastSearch(item)}
                       title={
                         lang === 'zh'
-                          ? '使用此提示词重新调用实时 Google Search'
-                          : 'Re-run this prompt live against Google Search'
+                          ? '使用当前全局数据源模式重新执行此提示词'
+                          : 'Re-run this prompt using the active data source mode'
                       }
                       className="px-2 py-1 rounded text-[11px] font-medium bg-[#9A3412] hover:bg-[#7C2D12] disabled:opacity-50 text-white transition-colors inline-flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
                     >
                       <Play className="w-2.5 h-2.5 fill-current" />
-                      {lang === 'zh' ? '重新检索' : 'Re-invoke'}
+                      {lang === 'zh' ? '重新执行' : 'Re-invoke'}
                     </button>
                   </div>
                 </div>
@@ -645,7 +796,7 @@ export function ResearchStudio({
           <div>
             <p className="text-xs font-mono uppercase tracking-widest text-[#9A3412] mb-2">
               {lang === 'zh'
-                ? '02 · 一等公民实时网络研究、时事引证与事实核查工作台 (GOOGLE SEARCH GROUNDED)'
+                ? '02 · 一等公民实时网络研究、时事引证与事实核查工作台 (RESEARCH & FACT-CHECK STUDIO)'
                 : '02 · FIRST-CLASS WEB RESEARCH, CURRENT EVENTS & FACT-CHECKING STUDIO'}
             </p>
             <h2
@@ -659,13 +810,67 @@ export function ResearchStudio({
           </div>
           <p className="text-sm text-[#57534E] max-w-md leading-relaxed">
             {lang === 'zh'
-              ? 'OpenMontage 将网络研究作为第一阶段（Stage 01）。粘贴参考视频、探讨最新热点新闻、或核验旁白脚本——所有检索均自动保存在“最近检索侧边栏”中，支持随时查阅或一键重新触发。'
-              : 'OpenMontage treats web research as a first-class stage. Explore breaking news, plan videos from references, or fact-check scripts—all saved in your Recent Searches sidebar.'}
+              ? 'OpenMontage 将网络研究作为第一阶段（Stage 01）。您可通过右上角全局开关随时切换“实时 Google Search 联网数据”与“纯静态模型训练权重”，系统将透明标注每一次输出的真实数据来源。'
+              : 'OpenMontage treats research as Stage 01. Use the top-right global toggle to switch between live Google Search web grounding and strictly static training data at any time.'}
           </p>
         </div>
 
+        {/* Transparent Data Provenance & Grounding Mode Notice Bar */}
+        <div
+          className={`mt-6 px-4 py-3 rounded-xl border flex flex-wrap items-center justify-between gap-4 transition-colors ${
+            useGoogleSearch
+              ? 'bg-[#FBF9F5] border-[#D6CEBE]'
+              : 'bg-[#FFFBEB] border-[#FDE68A]'
+          }`}
+        >
+          <div className="flex flex-wrap items-center gap-2.5 text-xs">
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${
+                useGoogleSearch ? 'bg-[#15803D]' : 'bg-[#D97706]'
+              }`}
+            />
+            <span className="font-mono font-semibold text-[#1C1917]">
+              {useGoogleSearch
+                ? lang === 'zh'
+                  ? '当前全局数据源：实时 Google Search 联网检索 (LIVE WEB DATA ENABLED)'
+                  : 'ACTIVE DATA SOURCE: LIVE GOOGLE SEARCH GROUNDING (CURRENT WEB DATA)'
+                : lang === 'zh'
+                ? '当前全局数据源：仅静态训练数据 (STRICTLY STATIC TRAINING DATA)'
+                : 'ACTIVE DATA SOURCE: STRICTLY STATIC TRAINING DATA (WEB SEARCH DISABLED)'}
+            </span>
+            <span className="text-[#A8A29E]">·</span>
+            <span className="text-[#57534E]">
+              {useGoogleSearch
+                ? lang === 'zh'
+                  ? '所有提案、事实核查与时事问答均调用 googleSearch 工具拉取最新网页并附带可验证引证链接。'
+                  : 'All studio operations query live web sources via the googleSearch tool and attach verified URLs.'
+                : lang === 'zh'
+                ? '已关闭实时联网搜索。AI 仅依赖预训练静态权重回答，不进行外部网页检索，且会明确提示时效性边界。'
+                : 'Real-time Google Search is disabled. The AI relies strictly on pre-trained model weights without live web requests.'}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={onToggleGoogleSearch}
+            className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer border ${
+              useGoogleSearch
+                ? 'bg-[#F3EFE6] hover:bg-[#E5E0D5] text-[#1C1917] border-[#D6CEBE]'
+                : 'bg-[#9A3412] hover:bg-[#7C2D12] text-white border-[#9A3412]'
+            }`}
+          >
+            {useGoogleSearch
+              ? lang === 'zh'
+                ? '切换至静态训练数据模式'
+                : 'Switch to Static Training Data'
+              : lang === 'zh'
+              ? '开启实时 Google Search 联网'
+              : 'Enable Live Google Search'}
+          </button>
+        </div>
+
         {/* Studio Mode Segmented Bar & Recent Searches Drawer / Sidebar Toggle */}
-        <div className="mt-8 flex flex-wrap items-center justify-between gap-4">
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
           <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-[#E5E0D5]/70 rounded-lg border border-[#D6CEBE]">
             <button
               type="button"
@@ -715,7 +920,15 @@ export function ResearchStudio({
             <div className="hidden sm:block text-xs font-mono text-[#78716C]">
               <span>MODEL: gemini-3.8-flash</span>
               <span className="mx-2">·</span>
-              <span>TOOL: googleSearch</span>
+              <span
+                className={
+                  useGoogleSearch
+                    ? 'text-[#15803D] font-semibold'
+                    : 'text-[#B45309] font-semibold'
+                }
+              >
+                {useGoogleSearch ? 'TOOL: googleSearch (ON)' : 'TOOL: Static Weights Only (OFF)'}
+              </span>
             </div>
 
             {/* Mobile / Tablet Slide-Over Drawer Trigger */}
@@ -836,12 +1049,20 @@ export function ResearchStudio({
                 >
                   <Sparkles className="w-4 h-4" />
                   {isLoading
+                    ? useGoogleSearch
+                      ? lang === 'zh'
+                        ? '正在执行实时 Google Search 检索与提案规划...'
+                        : 'Running Live Google Search & Proposal...'
+                      : lang === 'zh'
+                      ? '正在基于静态训练数据生成制作提案...'
+                      : 'Generating Proposal from Static Training Data...'
+                    : useGoogleSearch
                     ? lang === 'zh'
-                      ? '正在执行实时 Google Search 检索与提案规划...'
-                      : 'Running Live Google Search & Proposal...'
+                      ? '运行实时网络研究与生成制作提案 (Google Search)'
+                      : 'Run Grounded Research & Production Plan (Live Web)'
                     : lang === 'zh'
-                    ? '运行实时网络研究与生成制作提案'
-                    : 'Run Grounded Research & Production Plan'}
+                    ? '基于静态训练数据生成制作提案 (Offline Mode)'
+                    : 'Generate Production Plan (Static Training Data)'}
                 </button>
 
                 {/* Tested Prompt Gallery Picker */}
@@ -955,8 +1176,8 @@ export function ResearchStudio({
                   onChange={(e) => setFactCheckInput(e.target.value)}
                   placeholder={
                     lang === 'zh'
-                      ? '粘贴您的解说词初稿、科学数据或历史事件描述。系统将通过 Google Search 核实每一个事实点并生成执行摘要...'
-                      : 'Paste your script draft, scientific statistics, or historical claims for live Google Search verification...'
+                      ? '粘贴您的解说词初稿、科学数据或历史事件描述。系统将核实每一个事实点并生成执行摘要...'
+                      : 'Paste your script draft, scientific statistics, or historical claims for verification...'
                   }
                   className="w-full rounded-lg border border-[#D6CEBE] bg-white px-3.5 py-2.5 text-sm text-[#1C1917] placeholder:text-[#A8A29E] focus:outline-none focus:border-[#1E3A8A]"
                 />
@@ -974,12 +1195,20 @@ export function ResearchStudio({
                 >
                   <FileCheck2 className="w-4 h-4" />
                   {isLoading
+                    ? useGoogleSearch
+                      ? lang === 'zh'
+                        ? '正在通过 Google Search 核验脚本事实...'
+                        : 'Verifying Claims via Google Search...'
+                      : lang === 'zh'
+                      ? '正在基于静态训练数据核验脚本...'
+                      : 'Auditing Script via Static Training Data...'
+                    : useGoogleSearch
                     ? lang === 'zh'
-                      ? '正在通过 Google Search 核验脚本事实...'
-                      : 'Verifying Claims via Google Search...'
+                      ? '运行实时事实核查与生成执行摘要 (Google Search)'
+                      : 'Verify Script & Summarize (Live Google Search)'
                     : lang === 'zh'
-                    ? '运行事实核查与生成执行摘要'
-                    : 'Verify Script & Generate Executive Summary'}
+                    ? '基于静态训练数据核查脚本 (Offline Mode)'
+                    : 'Audit Script (Static Training Data Only)'}
                 </button>
 
                 <div className="mt-6 pt-5 border-t border-[#E5E0D5]">
@@ -991,19 +1220,19 @@ export function ResearchStudio({
                   <div className="space-y-2">
                     {[
                       {
-                        labelZh: '样本 1：CRISPR 基因编辑年代与机制核验',
+                        labelZh: 'Sample 1: CRISPR Gene Editing Timeline & Mechanism',
                         labelEn: 'Sample 1: CRISPR Gene Editing Timeline & Mechanism',
-                        text: '在 60 秒解说脚本中：CRISPR-Cas9 技术最早于 1995 年在人类细胞中完成首次基因编辑临床试验，它通过 RNA 引导酶直接合成全新的 DNA 链，目前无需任何导向序列即可实现 100% 零脱靶编辑。',
+                        text: 'In a 60-second explainer script: CRISPR-Cas9 completed its first human clinical gene-editing trial in 1995, and it works by using an RNA-guided enzyme to synthesize brand-new DNA strands from scratch with 100% zero off-target edits without any guide sequence.',
                       },
                       {
-                        labelZh: '样本 2：全球咖啡消费量排名与历史数据',
+                        labelZh: 'Sample 2: Global Coffee Consumption Per Capita Claims',
                         labelEn: 'Sample 2: Global Coffee Consumption Per Capita Claims',
                         text: 'Data explainer script: Brazil and Colombia have the highest per-capita coffee consumption in the world at over 18 kg per person annually, while Nordic countries like Finland consume less than 2 kg per capita.',
                       },
                       {
-                        labelZh: '样本 3：互联网 ARPANET 首次传输历史纪录片旁白',
+                        labelZh: 'Sample 3: ARPANET First Message Documentary Narration',
                         labelEn: 'Sample 3: ARPANET First Message Documentary Narration',
-                        text: '1969 年 10 月 29 日深夜，加州大学洛杉矶分校（UCLA）向斯坦福研究院发送了人类互联网的第一条消息“HELLO WORLD”，系统一次性完整传输成功，标志着万维网（World Wide Web）的正式诞生。',
+                        text: 'Late at night on October 29, 1969, UCLA transmitted the very first message over ARPANET to Stanford Research Institute: the full phrase "HELLO WORLD" succeeded on the first try, marking the official birth of the World Wide Web.',
                       },
                     ].map((sample, idx) => (
                       <button
@@ -1070,12 +1299,20 @@ export function ResearchStudio({
                 >
                   <Newspaper className="w-4 h-4" />
                   {isLoading
+                    ? useGoogleSearch
+                      ? lang === 'zh'
+                        ? '正在检索实时 Google Search 新闻信源...'
+                        : 'Searching Live News & Citations...'
+                      : lang === 'zh'
+                      ? '正在基于静态训练数据分析议题...'
+                      : 'Analyzing Topic via Static Training Data...'
+                    : useGoogleSearch
                     ? lang === 'zh'
-                      ? '正在检索实时 Google Search 新闻信源...'
-                      : 'Searching Live News & Citations...'
+                      ? '检索实时新闻并生成引证简报 (Google Search)'
+                      : 'Query Current Events & Cite News (Live Web)'
                     : lang === 'zh'
-                    ? '检索实时新闻并生成引证简报'
-                    : 'Query Current Events & Cite News'}
+                    ? '基于静态训练数据分析议题 (Offline Mode)'
+                    : 'Analyze Topic (Static Training Data Only)'}
                 </button>
 
                 <div className="mt-6 pt-5 border-t border-[#E5E0D5]">
@@ -1087,19 +1324,19 @@ export function ResearchStudio({
                   <div className="space-y-2">
                     {[
                       {
-                        labelZh: '时事 1：近期固态电池与新能源快充技术突破',
+                        labelZh: 'News 1: Recent Solid-State EV Battery & Charging Breakthroughs',
                         labelEn: 'News 1: Recent Solid-State EV Battery & Charging Breakthroughs',
-                        text: '检索近期关于固态电池量产时间表与能量密度的新闻报道，核实核心数据并提供一部 60 秒数据解说视频的脚本钩子。',
+                        text: 'Search for recent news reports on solid-state EV battery mass production timelines and energy density benchmarks, verify the key figures, and propose a 60-second data explainer script hook.',
                       },
                       {
-                        labelZh: '时事 2：NASA 木卫二 Europa Clipper 与深空探测最新进展',
+                        labelZh: 'News 2: NASA Europa Clipper & Outer Planet Exploration Updates',
                         labelEn: 'News 2: NASA Europa Clipper & Outer Planet Exploration Updates',
                         text: 'What are the latest mission updates and scientific objectives for NASA Europa Clipper? Cite recent sources and suggest a documentary montage angle.',
                       },
                       {
-                        labelZh: '时事 3：开源视频生成模型（WAN 2.1 / Hunyuan / LTX）生态对比',
+                        labelZh: 'News 3: Open-Source Video Generation Models Ecosystem',
                         labelEn: 'News 3: Open-Source Video Generation Models Ecosystem',
-                        text: '检索当前主流开源本地视频生成模型（WAN 2.1、混元视频、LTX-Video）的最新性能对比与显存要求，并给出技术解说要点。',
+                        text: 'Compare the latest open-source local video generation models (WAN 2.1, HunyuanVideo, LTX-Video), including VRAM requirements and motion quality, and outline key points for a technical explainer.',
                       },
                     ].map((sample, idx) => (
                       <button
@@ -1129,13 +1366,29 @@ export function ResearchStudio({
             {/* Output Header Bar */}
             <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#E5E0D5]">
               <div className="min-w-0 flex-1">
-                <div className="text-xs font-mono text-[#78716C] flex items-center gap-2">
+                <div className="text-xs font-mono text-[#78716C] flex flex-wrap items-center gap-2">
                   <span>
                     {currentResult.mode === 'proposal'
                       ? 'STAGE 01 & 02 · RESEARCH BRIEFING'
                       : currentResult.mode === 'fact-check'
                       ? 'REVIEWER SKILL · FACT-CHECK REPORT'
-                      : 'LIVE NEWS AGENT · CURRENT EVENTS CITATION'}
+                      : 'NEWS AGENT · CURRENT EVENTS BRIEF'}
+                  </span>
+                  <span>·</span>
+                  <span
+                    className={
+                      currentResult.groundingMode === 'static-training'
+                        ? 'text-[#B45309] font-semibold'
+                        : 'text-[#15803D] font-semibold'
+                    }
+                  >
+                    {currentResult.groundingMode === 'static-training'
+                      ? lang === 'zh'
+                        ? '数据源: 仅静态训练数据 (STATIC WEIGHTS)'
+                        : 'SOURCE: STATIC TRAINING DATA ONLY'
+                      : lang === 'zh'
+                      ? '数据源: 实时 GOOGLE SEARCH 联网数据'
+                      : 'SOURCE: LIVE GOOGLE SEARCH WEB DATA'}
                   </span>
                   <span>·</span>
                   <span className="tabular-nums">{currentResult.timestamp}</span>
@@ -1159,12 +1412,12 @@ export function ResearchStudio({
                   className="px-2.5 py-1.5 rounded-lg border border-[#D6CEBE] bg-[#F3EFE6] hover:bg-[#E5E0D5] text-xs font-medium text-[#1C1917] transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
                   title={
                     lang === 'zh'
-                      ? '重新调用 Google Search 刷新此简报'
-                      : 'Re-invoke Google Search for this prompt'
+                      ? '使用当前全局数据源设置重新生成此简报'
+                      : 'Re-run this prompt using the active data source setting'
                   }
                 >
                   <RotateCcw className="w-3.5 h-3.5 text-[#9A3412]" />
-                  {lang === 'zh' ? '重新执行检索' : 'Re-invoke'}
+                  {lang === 'zh' ? '重新执行' : 'Re-invoke'}
                 </button>
 
                 <button
@@ -1202,7 +1455,7 @@ export function ResearchStudio({
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                 <div>
                   <p className="font-semibold">
-                    {lang === 'zh' ? '检索执行提醒' : 'Grounding Request Notice'}
+                    {lang === 'zh' ? '检索执行提醒' : 'Research Request Notice'}
                   </p>
                   <p className="mt-0.5">{errorMsg}</p>
                 </div>
@@ -1219,9 +1472,13 @@ export function ResearchStudio({
                 <div className="pt-4 h-4 bg-[#E5E0D5] rounded w-1/3" />
                 <div className="h-24 bg-[#F3EFE6] border border-[#E5E0D5] rounded-lg w-full" />
                 <p className="text-xs font-mono text-[#78716C] pt-2">
-                  {lang === 'zh'
-                    ? '正在调用 gemini-3.8-flash 与 Google Search 工具检索实时网络来源并生成结构化简报...'
-                    : 'Querying gemini-3.8-flash with googleSearch tool for live citations and structured production brief...'}
+                  {useGoogleSearch
+                    ? lang === 'zh'
+                      ? '正在调用 gemini-3.8-flash 与 Google Search 工具检索实时网络来源并生成结构化简报...'
+                      : 'Querying gemini-3.8-flash with googleSearch tool for live citations and structured production brief...'
+                    : lang === 'zh'
+                    ? '已禁用实时 Google Search：正在仅基于 gemini-3.8-flash 静态训练数据权重生成简报...'
+                    : 'Google Search disabled: Generating brief strictly from gemini-3.8-flash static training weights...'}
                 </p>
               </div>
             ) : (
@@ -1242,20 +1499,60 @@ export function ResearchStudio({
                 {/* Grounded Web Citations Footer */}
                 <div className="mt-8 pt-5 border-t border-[#E5E0D5]">
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs font-mono uppercase tracking-wider text-[#1E3A8A]">
-                      {lang === 'zh'
+                    <span
+                      className={`text-xs font-mono uppercase tracking-wider ${
+                        currentResult.groundingMode === 'static-training'
+                          ? 'text-[#B45309]'
+                          : 'text-[#1E3A8A]'
+                      }`}
+                    >
+                      {currentResult.groundingMode === 'static-training'
+                        ? lang === 'zh'
+                          ? '数据溯源：仅静态模型训练数据 (无实时网页引证)'
+                          : 'DATA PROVENANCE: STRICTLY STATIC TRAINING DATA (0 LIVE WEB CITATIONS)'
+                        : lang === 'zh'
                         ? `GOOGLE SEARCH 实时引证来源 (${currentResult.citations.length})`
                         : `VERIFIED GOOGLE SEARCH CITATIONS (${currentResult.citations.length})`}
                     </span>
                     <span className="text-[11px] font-mono text-[#78716C]">
-                      groundingMetadata.groundingChunks
+                      {currentResult.groundingMode === 'static-training'
+                        ? 'tools: [] (googleSearch disabled)'
+                        : 'groundingMetadata.groundingChunks'}
                     </span>
                   </div>
 
-                  {currentResult.citations.length === 0 ? (
+                  {currentResult.groundingMode === 'static-training' ? (
+                    <div className="p-3.5 rounded-lg border border-[#FDE68A] bg-[#FFFBEB] flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs text-[#92400E] leading-relaxed">
+                        {lang === 'zh'
+                          ? '此简报生成时已关闭实时 Google Search 联网功能，内容完全基于 AI 模型的静态预训练权重，未检索实时互联网网页。'
+                          : 'This briefing was generated with real-time Google Search disabled. The AI relied strictly on static pre-trained model weights without live web verification.'}
+                      </p>
+                      <button
+                        type="button"
+                        disabled={isLoading}
+                        onClick={() => {
+                          if (!useGoogleSearch) {
+                            onToggleGoogleSearch();
+                          }
+                          executeGroundedSearch({
+                            targetMode: currentResult.mode,
+                            queryText: currentResult.query,
+                            refText: currentResult.referenceVideo || '',
+                            overrideGrounding: true,
+                          });
+                        }}
+                        className="px-3 py-1.5 rounded-md bg-[#9A3412] hover:bg-[#7C2D12] text-white text-xs font-mono font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                      >
+                        {lang === 'zh'
+                          ? '开启 Google Search 并重新核验'
+                          : 'Enable Google Search & Re-verify'}
+                      </button>
+                    </div>
+                  ) : currentResult.citations.length === 0 ? (
                     <p className="text-xs text-[#78716C]">
                       {lang === 'zh'
-                        ? '该响应已由 Gemini 知识库与搜索工具综合生成。点击“重新执行检索”获取最新网页链接。'
+                        ? '该响应已由 Gemini 知识库与搜索工具综合生成。点击“重新执行”获取最新网页链接。'
                         : 'Synthesized with search grounding. Click "Re-invoke" to fetch fresh web links.'}
                     </p>
                   ) : (

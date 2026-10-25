@@ -28,9 +28,13 @@ import {
   FileCode2,
 } from 'lucide-react';
 
+import { savePipelineAttemptToCloud } from '@/lib/firebase';
+
 interface PipelineGovernanceExplorerProps {
   lang: 'zh' | 'en';
+  userId?: string | null;
   availableKeys: string[];
+  useGoogleSearch: boolean;
   onToggleKey: (envKey: string) => void;
   onResetZeroKeys: () => void;
   onSelectPipelinePrompt: (pipelineName: string, referenceNote?: string) => void;
@@ -61,7 +65,9 @@ function computeWeightedScore(p: ProviderEntry): number {
 
 export function PipelineGovernanceExplorer({
   lang,
+  userId,
   availableKeys,
+  useGoogleSearch,
   onToggleKey,
   onResetZeroKeys,
   onSelectPipelinePrompt,
@@ -105,7 +111,7 @@ export function PipelineGovernanceExplorer({
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('openmontage_pipeline_attempts_v1');
+      const saved = localStorage.getItem('openmontage_pipeline_attempts_en_v1');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -120,7 +126,7 @@ export function PipelineGovernanceExplorer({
   const persistAttempts = (list: ProductionAttempt[]) => {
     setAttempts(list);
     try {
-      localStorage.setItem('openmontage_pipeline_attempts_v1', JSON.stringify(list));
+      localStorage.setItem('openmontage_pipeline_attempts_en_v1', JSON.stringify(list));
     } catch {
       // Ignore storage error
     }
@@ -139,7 +145,7 @@ export function PipelineGovernanceExplorer({
     filteredAttempts[0] ||
     attempts[0];
 
-  // Simulate a new pipeline run with custom failure injection + live Google Search grounding
+  // Simulate a new pipeline run with custom failure injection + Google Search grounding or static data
   const handleSimulatePipelineAttempt = async () => {
     const targetPipe =
       PIPELINES.find((p) => p.id === simPipelineId) || PIPELINES[0];
@@ -149,10 +155,13 @@ export function PipelineGovernanceExplorer({
 
     setIsSimulatingRun(true);
 
-    let groundedSummary =
-      lang === 'zh'
+    let groundedSummary = useGoogleSearch
+      ? lang === 'zh'
         ? `已通过 Google Search 实时检索验证“${queryText}”相关的最新事实数据与新闻信源。`
-        : `Verified real-time facts and news sources via Google Search for "${queryText}".`;
+        : `Verified real-time facts and news sources via Google Search for "${queryText}".`
+      : lang === 'zh'
+      ? `【静态训练数据模式】未调用实时 Google Search，仅基于模型静态预训练知识对“${queryText}”建立基础研究上下文。`
+      : `[Static Training Data Mode] Real-time Google Search was disabled; Stage 01 context for "${queryText}" relies strictly on static model knowledge.`;
     let citations: GroundedCitation[] = [];
 
     try {
@@ -165,6 +174,7 @@ export function PipelineGovernanceExplorer({
           pipelineName: targetPipe.nameEn,
           injectionScenario: injectionMode,
           language: lang,
+          useGoogleSearch,
         }),
       });
       const data = await res.json();
@@ -424,6 +434,31 @@ export function PipelineGovernanceExplorer({
     setSelectedAttemptId(newAttempt.id);
     setAttemptStatusFilter('all');
     setIsSimulatingRun(false);
+
+    if (userId) {
+      try {
+        await savePipelineAttemptToCloud({
+          userId,
+          attemptId: newAttempt.id,
+          runCode: newAttempt.runCode,
+          pipelineId: newAttempt.pipelineId,
+          pipelineNameZh: newAttempt.pipelineNameZh,
+          pipelineNameEn: newAttempt.pipelineNameEn,
+          prompt: newAttempt.prompt,
+          runtime: newAttempt.runtime,
+          status: newAttempt.status,
+          statusLabelZh: newAttempt.statusLabelZh,
+          statusLabelEn: newAttempt.statusLabelEn,
+          durationSec: status === 'failed' ? 14 : 52,
+          estimatedCost: newAttempt.budget.estimated,
+          settledCost: newAttempt.budget.settled,
+          groundedSummary: newAttempt.groundedSummary,
+          startedAtLabel: newAttempt.createdAt,
+        });
+      } catch {
+        // Handled by handleFirestoreError
+      }
+    }
   };
 
   // Filter and sort providers by 7-dimension weighted score and whether their key is active
@@ -1156,7 +1191,7 @@ export function PipelineGovernanceExplorer({
                   : '7-Stage Structured Workflow & Quality Gates (Click Stage to Inspect)'}
               </h3>
               <span className="text-xs font-mono text-[#78716C]">
-                研究 → 提案 → 脚本 → 场景规划 → 资产生成 → 剪辑 → 合成
+                Research → Proposal → Script → Scene Plan → Assets → Edit → Compose
               </span>
             </div>
 
